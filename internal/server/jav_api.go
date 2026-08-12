@@ -132,6 +132,11 @@ type createCatalogJavRequest struct {
 	Title string `json:"title"`
 }
 
+type createCatalogJavResponse struct {
+	*models.Jav
+	ScrapeStatus string `json:"scrape_status"`
+}
+
 // createCatalogJavItem creates a work without requiring a scanned local video.
 // Rich metadata remains editable through the existing JAV edit dialog.
 func createCatalogJavItem(c *gin.Context) {
@@ -165,19 +170,34 @@ func createCatalogJavItem(c *gin.Context) {
 			respondLocalizedError(c, http.StatusInternalServerError, "读取作品失败", "Failed to load JAV item")
 			return
 		}
-		c.JSON(http.StatusOK, item)
+		c.JSON(http.StatusOK, createCatalogJavResponse{Jav: item, ScrapeStatus: "existing"})
 		return
 	}
 
 	title := strings.TrimSpace(req.Title)
-	if title == "" {
-		title = code
+	info := &jav.JavInfo{Code: code, Title: title, Provider: jav.ProviderUser}
+	scrapeStatus := "unavailable"
+	// Do the lookup as part of creating the catalog entry.  The previous
+	// implementation relied on a later background scan, which only considers
+	// records with an empty title and therefore made the result unpredictable.
+	if scraped, lookupErr := jav.LookupJavByCode(code, jav.ProviderJavBus); lookupErr == nil && scraped != nil {
+		info = scraped
+		info.Code = code
+		if title != "" {
+			// A title supplied by the user is intentional and must win over a
+			// provider result.
+			info.Title = title
+		}
+		scrapeStatus = "scraped"
+	} else if errors.Is(lookupErr, jav.ResourceNotFonud) {
+		scrapeStatus = "not_found"
+	} else if lookupErr != nil {
+		logging.Error("catalog JAV lookup failed code=%s: %v", code, lookupErr)
 	}
-	created, err := dbpkg.SaveCatalogJavInfo(c.Request.Context(), &jav.JavInfo{
-		Code:     code,
-		Title:    title,
-		Provider: jav.ProviderUser,
-	})
+	if strings.TrimSpace(info.Title) == "" {
+		info.Title = code
+	}
+	created, err := dbpkg.SaveCatalogJavInfo(c.Request.Context(), info)
 	if err != nil {
 		logging.Error("create catalog jav code=%s: %v", code, err)
 		respondLocalizedError(c, http.StatusBadRequest, "新增作品失败", "Failed to create JAV item")
@@ -189,7 +209,7 @@ func createCatalogJavItem(c *gin.Context) {
 		respondLocalizedError(c, http.StatusInternalServerError, "读取新增作品失败", "Failed to load created JAV item")
 		return
 	}
-	c.JSON(http.StatusCreated, item)
+	c.JSON(http.StatusCreated, createCatalogJavResponse{Jav: item, ScrapeStatus: scrapeStatus})
 }
 
 func listJavFilterOptions(c *gin.Context) {

@@ -3235,19 +3235,26 @@ export default function App() {
           viewMode: 'jav',
           javTab: 'list',
           javPage: 1,
-          javSearchTerm: String(item?.code || code || '').trim(),
+          // Keep the complete works list visible.  Searching for the most
+          // recently added code made the preceding work look as if it had
+          // been replaced on the next creation.
+          javSearchTerm: '',
           javRandomMode: false,
           javRandomSeed: null,
         })
         await loadJavs({ force: true })
-        showToast(
-          item?.is_catalog_only
-            ? zh(
-                '作品已新增，可在作品菜单中继续编辑',
-                'Work added. Continue editing it from the work menu.'
-              )
-            : zh('作品已存在，已为你打开', 'This work already exists and has been opened.')
-        )
+        if (item?.scrape_status === 'existing') {
+          showToast(zh('作品已存在，已为你打开', 'This work already exists and has been opened.'))
+        } else if (item?.scrape_status === 'scraped') {
+          showToast(zh('作品已新增，元信息已自动补全', 'Work added and metadata was filled in.'))
+        } else {
+          showToast(
+            zh(
+              '作品已新增；暂未找到元信息，可在作品编辑中补充。',
+              'Work added. Metadata was not found; you can complete it in the work editor.'
+            )
+          )
+        }
       } finally {
         setCreateJavSaving(false)
       }
