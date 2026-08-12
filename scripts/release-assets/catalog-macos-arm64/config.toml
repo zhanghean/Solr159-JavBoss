@@ -1,0 +1,4 @@
+# JavBoss 本机版设置
+# 默认会在浏览器打开 http://localhost:8655
+server_url = ""
+port = 8655
