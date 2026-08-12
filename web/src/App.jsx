@@ -3242,7 +3242,10 @@ export default function App() {
         await loadJavs({ force: true })
         showToast(
           item?.is_catalog_only
-            ? zh('作品已新增，可在作品菜单中继续编辑', 'Work added. Continue editing it from the work menu.')
+            ? zh(
+                '作品已新增，可在作品菜单中继续编辑',
+                'Work added. Continue editing it from the work menu.'
+              )
             : zh('作品已存在，已为你打开', 'This work already exists and has been opened.')
         )
       } finally {
