@@ -666,7 +666,10 @@ type javItemUpdateRequest struct {
 	ReleaseDate    *string  `json:"release_date"`
 	DurationMin    *int     `json:"duration_min"`
 	FavoriteRating *float64 `json:"favorite_rating"`
+	Note           *string  `json:"note"`
 }
+
+const maxJavNoteLength = 2000
 
 func updateJavItem(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
@@ -678,6 +681,10 @@ func updateJavItem(c *gin.Context) {
 	var req javItemUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondLocalizedError(c, http.StatusBadRequest, "修改 JAV 信息请求无效", "Invalid JAV item update request")
+		return
+	}
+	if req.Note != nil && len([]rune(*req.Note)) > maxJavNoteLength {
+		respondLocalizedError(c, http.StatusBadRequest, "备注不能超过 2000 个字符", "Note must be at most 2000 characters")
 		return
 	}
 
@@ -723,6 +730,7 @@ func updateJavItem(c *gin.Context) {
 		ReleaseUnix:    releaseUnix,
 		DurationMin:    req.DurationMin,
 		FavoriteRating: req.FavoriteRating,
+		Note:           req.Note,
 	}, parseDirectoryIDs(c.Query("directory_ids")))
 	if err != nil {
 		logging.Error("update jav item error: %v", err)

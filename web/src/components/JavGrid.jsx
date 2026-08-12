@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { IconButton, Popper, Rating, Tooltip } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import CloseOutlinedIcon from '@mui/icons-material/CloseOutlined'
+import ContentCopyOutlinedIcon from '@mui/icons-material/ContentCopyOutlined'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import ManageSearchIcon from '@mui/icons-material/ManageSearch'
 import { MovieEdit } from '@mui/icons-material'
@@ -733,7 +734,9 @@ function editableJavTitle(item) {
 function JavEditModal({ open, item, directoryIds, preferChineseName = false, onClose, onSaved }) {
   const tagOptions = useStore((state) => state.javTagOptions || [])
   const loadJavTags = useStore((state) => state.loadJavTags)
+  const initializedItemIdRef = useRef(null)
   const [title, setTitle] = useState('')
+  const [note, setNote] = useState('')
   const [coverUrl, setCoverUrl] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState([])
   const [selectedIdolIds, setSelectedIdolIds] = useState([])
@@ -837,7 +840,10 @@ function JavEditModal({ open, item, directoryIds, preferChineseName = false, onC
 
   useEffect(() => {
     if (!open) return
+    if (initializedItemIdRef.current === item?.id) return
+    initializedItemIdRef.current = item?.id || null
     setTitle(editableJavTitle(item))
+    setNote(String(item?.note || ''))
     setCoverUrl('')
     setSelectedTagIds(
       Array.isArray(item?.tags)
@@ -869,6 +875,10 @@ function JavEditModal({ open, item, directoryIds, preferChineseName = false, onC
     setSaving(false)
     void loadJavTags?.({ skipUnchanged: true })
   }, [currentSeries?.id, item, loadJavTags, open])
+
+  useEffect(() => {
+    if (!open) initializedItemIdRef.current = null
+  }, [open])
 
   useEffect(() => {
     if (!open) return undefined
@@ -945,6 +955,7 @@ function JavEditModal({ open, item, directoryIds, preferChineseName = false, onC
     try {
       const payload = {
         title: title.trim(),
+        note: note.trim(),
         ...(trimmedCoverUrl ? { cover_url: trimmedCoverUrl } : {}),
         tag_ids: selectedTagIds.map((id) => Number(id)).filter(Boolean),
         idol_ids: selectedIdolIds.map((id) => Number(id)).filter(Boolean),
@@ -1017,6 +1028,28 @@ function JavEditModal({ open, item, directoryIds, preferChineseName = false, onC
             className="mt-2 w-full resize-y rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             disabled={saving}
           />
+        </div>
+        <div>
+          <label
+            className="block text-sm font-medium text-gray-700"
+            htmlFor={`jav-note-${item?.id || 'new'}`}
+          >
+            {zh('备注', 'Note')}
+          </label>
+          <textarea
+            id={`jav-note-${item?.id || 'new'}`}
+            rows={3}
+            value={note}
+            maxLength={2000}
+            onChange={(event) => {
+              setNote(event.target.value)
+              if (error) setError('')
+            }}
+            placeholder={zh('填写个人备注', 'Add a personal note')}
+            className="mt-2 w-full resize-y rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            disabled={saving}
+          />
+          <div className="mt-1 text-right text-xs text-gray-500">{note.length}/2000</div>
         </div>
         <div>
           <label
@@ -1684,11 +1717,13 @@ function JavCard({
   const primaryVideo = useMemo(() => (item?.videos || [])[0], [item])
   const { coverAspectPercent } = useMemo(() => getIdolCardLayoutProps(), [])
   const code = item?.code?.trim()
+  const note = String(item?.note || '').trim()
   const [coverVersion, setCoverVersion] = useState(0)
   const [editorOpen, setEditorOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [javdbURL, setJavdbURL] = useState('')
   const [javdbOpening, setJavdbOpening] = useState(false)
+  const [noteCopyStatus, setNoteCopyStatus] = useState('')
   const coverBase = code ? `/jav/${encodeURIComponent(code)}/cover` : null
   const cover = coverBase ? `${coverBase}${coverVersion ? `?v=${coverVersion}` : ''}` : null
 
@@ -1751,6 +1786,10 @@ function JavCard({
   useEffect(() => {
     setFavoriteRating(itemFavoriteRating)
   }, [item?.id, itemFavoriteRating])
+
+  useEffect(() => {
+    setNoteCopyStatus('')
+  }, [item?.id, note])
 
   const openExternalURL = (popup, targetURL) => {
     if (!targetURL) {
@@ -1868,6 +1907,20 @@ function JavCard({
   const handleDeleteCatalogItem = (event) => {
     event.stopPropagation()
     onDeleteCatalogItem?.(item)
+  }
+
+  const handleCopyNote = async (event) => {
+    event.stopPropagation()
+    if (!note) return
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('clipboard unavailable')
+      }
+      await navigator.clipboard.writeText(note)
+      setNoteCopyStatus(zh('已复制', 'Copied'))
+    } catch {
+      setNoteCopyStatus(zh('复制失败', 'Copy failed'))
+    }
   }
 
   const handleOpenJavFavorites = (event) => {
@@ -2516,6 +2569,30 @@ function JavCard({
               >
                 {seriesText}
               </a>
+            </div>
+          ) : null}
+          {note ? (
+            <div className="rounded-md border border-amber-100 bg-amber-50/60 px-2.5 py-2 text-xs text-gray-700">
+              <div className="flex items-start gap-2">
+                <span className="shrink-0 font-medium text-amber-800">{zh('备注', 'Note')}</span>
+                <span className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-snug">
+                  {note}
+                </span>
+              </div>
+              <div className="mt-1.5 flex items-center justify-end gap-2">
+                {noteCopyStatus ? (
+                  <span className="text-[11px] text-gray-500">{noteCopyStatus}</span>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleCopyNote}
+                  className="inline-flex items-center gap-1 rounded border border-amber-200 bg-white px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+                  aria-label={zh('复制备注', 'Copy note')}
+                >
+                  <ContentCopyOutlinedIcon sx={{ fontSize: 13 }} />
+                  {zh('复制备注', 'Copy note')}
+                </button>
+              </div>
             </div>
           ) : null}
           <Popper

@@ -1157,14 +1157,25 @@ func TestUpdateJavEditsTitle(t *testing.T) {
 	}
 
 	zhTitle := "新标题"
-	updated, err := UpdateJav(ctx, javRec.ID, JavUpdateInput{Title: &zhTitle}, nil)
+	note := "个人备注，可复制使用"
+	updated, err := UpdateJav(ctx, javRec.ID, JavUpdateInput{Title: &zhTitle, Note: &note}, nil)
 	if err != nil {
 		t.Fatalf("UpdateJav title: %v", err)
 	}
 	if updated.Title != zhTitle {
 		t.Fatalf("unexpected title: %q", updated.Title)
 	}
+	if updated.Note != note {
+		t.Fatalf("unexpected note: %q", updated.Note)
+	}
 	assertJavTitle(t, db, javRec.Code, zhTitle)
+	var stored models.Jav
+	if err := db.Where("id = ?", javRec.ID).First(&stored).Error; err != nil {
+		t.Fatalf("load updated jav: %v", err)
+	}
+	if stored.Note != note {
+		t.Fatalf("stored note: %q", stored.Note)
+	}
 }
 
 func TestUpdateJavFavoriteRating(t *testing.T) {
