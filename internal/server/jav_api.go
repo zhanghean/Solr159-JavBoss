@@ -212,6 +212,148 @@ func createCatalogJavItem(c *gin.Context) {
 	c.JSON(http.StatusCreated, createCatalogJavResponse{Jav: item, ScrapeStatus: scrapeStatus})
 }
 
+// lookupCatalogJavScrape fetches metadata for a catalog-only item without
+// requiring a local video file. It mirrors the provider buttons in the video
+// manual-scrape dialog.
+func lookupCatalogJavScrape(c *gin.Context) {
+	item, ok := getCatalogJavItem(c)
+	if !ok {
+		return
+	}
+
+	provider, ok := parseVideoJavScrapeLookupProvider(c.Query("provider"))
+	if !ok {
+		respondLocalizedError(c, http.StatusBadRequest, "自动填充来源无效", "Invalid autofill provider")
+		return
+	}
+	code := strings.ToUpper(strings.TrimSpace(c.Query("code")))
+	if code == "" {
+		code = item.Code
+	}
+	if code != item.Code {
+		respondLocalizedError(c, http.StatusBadRequest, "作品番号不可修改", "The work code cannot be changed")
+		return
+	}
+
+	providerLabel := videoJavScrapeLookupProviderLabel(provider)
+	info, err := jav.LookupJavByCode(code, provider)
+	if err != nil {
+		if errors.Is(err, jav.ResourceNotFonud) {
+			respondLocalizedError(c, http.StatusNotFound, fmt.Sprintf("%s 中未找到对应元数据", providerLabel), fmt.Sprintf("%s metadata was not found", providerLabel))
+			return
+		}
+		logging.Error("lookup catalog %s metadata code=%s: %v", provider.String(), code, err)
+		respondLocalizedError(c, http.StatusInternalServerError, fmt.Sprintf("从 %s 获取元数据失败", providerLabel), fmt.Sprintf("Failed to fetch metadata from %s", providerLabel))
+		return
+	}
+	if info == nil {
+		respondLocalizedError(c, http.StatusNotFound, fmt.Sprintf("%s 中未找到对应元数据", providerLabel), fmt.Sprintf("%s metadata was not found", providerLabel))
+		return
+	}
+	c.JSON(http.StatusOK, javInfoToVideoScrapeResponse(info))
+}
+
+// manualCatalogJavScrape saves manually edited metadata for a catalog-only
+// item. The code deliberately remains fixed so a correction cannot create a
+// second, disconnected work record.
+func manualCatalogJavScrape(c *gin.Context) {
+	item, ok := getCatalogJavItem(c)
+	if !ok {
+		return
+	}
+
+	var req videoJavManualScrapeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondLocalizedError(c, http.StatusBadRequest, "手动刮削请求无效", "Invalid manual scrape request")
+		return
+	}
+	info, err := manualScrapeRequestToJavInfo(req)
+	if err != nil {
+		respondManualScrapeValidationError(c, err)
+		return
+	}
+	if info.Code != item.Code {
+		respondLocalizedError(c, http.StatusBadRequest, "作品番号不可修改", "The work code cannot be changed")
+		return
+	}
+
+	updated, err := dbpkg.SaveCatalogJavManualInfo(c.Request.Context(), info)
+	if err != nil {
+		logging.Error("manual catalog jav scrape save failed id=%d code=%s: %v", item.ID, info.Code, err)
+		respondLocalizedError(c, http.StatusBadRequest, "保存手动刮削信息失败", "Failed to save manual scrape metadata")
+		return
+	}
+	downloadManualJavCover(c.Request.Context(), info)
+	result, err := dbpkg.GetJav(c.Request.Context(), updated.ID, nil)
+	if err != nil {
+		logging.Error("reload manual catalog jav scrape id=%d: %v", updated.ID, err)
+		respondLocalizedError(c, http.StatusInternalServerError, "重新加载作品失败", "Failed to reload JAV item")
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func getCatalogJavItem(c *gin.Context) (*models.Jav, bool) {
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		respondLocalizedError(c, http.StatusBadRequest, "作品 ID 无效", "Invalid work ID")
+		return nil, false
+	}
+	item, err := dbpkg.GetJav(c.Request.Context(), id, nil)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			respondLocalizedError(c, http.StatusNotFound, "作品不存在", "JAV item does not exist")
+		} else {
+			logging.Error("load catalog jav item id=%d: %v", id, err)
+			respondLocalizedError(c, http.StatusInternalServerError, "读取作品失败", "Failed to load JAV item")
+		}
+		return nil, false
+	}
+	if !item.IsCatalogOnly {
+		respondLocalizedError(c, http.StatusBadRequest, "仅能操作自定义作品", "Only catalog-only works can be changed here")
+		return nil, false
+	}
+	return item, true
+}
+
+func respondManualScrapeValidationError(c *gin.Context, err error) {
+	messageZH := "手动刮削信息无效"
+	messageEN := "Invalid manual scrape metadata"
+	switch err.Error() {
+	case "code is required":
+		messageZH = "番号不能为空"
+		messageEN = "JAV code is required"
+	case "release_date must be YYYY-MM-DD":
+		messageZH = "发行日期格式必须为 YYYY-MM-DD"
+		messageEN = "Release date must use the YYYY-MM-DD format"
+	case "duration_min must be non-negative":
+		messageZH = "时长不能为负数"
+		messageEN = "Duration cannot be negative"
+	}
+	respondLocalizedError(c, http.StatusBadRequest, messageZH, messageEN)
+}
+
+func deleteCatalogJavItem(c *gin.Context) {
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		respondLocalizedError(c, http.StatusBadRequest, "作品 ID 无效", "Invalid work ID")
+		return
+	}
+	if err := dbpkg.DeleteCatalogJav(c.Request.Context(), id); err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			respondLocalizedError(c, http.StatusNotFound, "作品不存在", "JAV item does not exist")
+		case errors.Is(err, dbpkg.ErrJavNotCatalogOnly), errors.Is(err, dbpkg.ErrCatalogJavHasVideoLocations):
+			respondLocalizedError(c, http.StatusBadRequest, "该作品关联了本地视频，无法在此删除", "This work is linked to a local video and cannot be deleted here")
+		default:
+			logging.Error("delete catalog jav id=%d: %v", id, err)
+			respondLocalizedError(c, http.StatusInternalServerError, "删除作品失败", "Failed to delete JAV item")
+		}
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func listJavFilterOptions(c *gin.Context) {
 	filterQuery, ok := parseJavFilterQuery(c)
 	if !ok {

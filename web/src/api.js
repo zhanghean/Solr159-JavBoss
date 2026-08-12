@@ -577,6 +577,38 @@ export async function createCatalogJav({ code, title = '' } = {}) {
   return res.json()
 }
 
+export async function lookupCatalogJavScrape(id, code, provider = 'javdb') {
+  const params = new URLSearchParams()
+  params.set('code', String(code || '').trim())
+  params.set('provider', String(provider || '').trim())
+  const res = await apiFetch(
+    `/jav/items/${encodeURIComponent(id)}/manual-scrape/lookup?${params.toString()}`
+  )
+  if (!res.ok) {
+    throw await apiError(res)
+  }
+  return res.json()
+}
+
+export async function manualCatalogJavScrape(id, info) {
+  const res = await apiFetch(`/jav/items/${encodeURIComponent(id)}/manual-scrape`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(info || {}),
+  })
+  if (!res.ok) {
+    throw await apiError(res)
+  }
+  return res.json()
+}
+
+export async function deleteCatalogJav(id) {
+  const res = await apiFetch(`/jav/items/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!res.ok) {
+    throw await apiError(res)
+  }
+}
+
 export async function fetchJavFilterOptions({
   search = '',
   idolIds = [],

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { IconButton, Popper, Rating, Tooltip } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import CloseOutlinedIcon from '@mui/icons-material/CloseOutlined'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import ManageSearchIcon from '@mui/icons-material/ManageSearch'
 import { MovieEdit } from '@mui/icons-material'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
@@ -25,11 +27,15 @@ import {
   fetchJavSeries,
   fetchJavStudioPreview,
   fetchJavStudios,
+  deleteCatalogJav,
+  lookupCatalogJavScrape,
+  manualCatalogJavScrape,
   updateJavItem,
 } from '@/api'
 import JavDetailModal from '@/components/JavDetailModal'
 import AppModal from '@/components/AppModal'
 import JavIdolCoverModal from '@/components/JavIdolCoverModal'
+import JavManualScrapeModal from '@/components/JavManualScrapeModal'
 import { IdolCard, JavIdolEditModal, getIdolCardLayoutProps } from '@/components/JavIdolGrid'
 import { SeriesCard } from '@/components/JavSeriesView'
 import { StudioCard } from '@/components/JavStudioView'
@@ -124,6 +130,11 @@ export default function JavGrid({
   onManageVideoTagClick,
 }) {
   const directoryIds = useStore(directoryQueryIds)
+  const loadJavs = useStore((state) => state.loadJavs)
+  const loadJavIdols = useStore((state) => state.loadJavIdols)
+  const loadJavStudios = useStore((state) => state.loadJavStudios)
+  const loadJavSeries = useStore((state) => state.loadJavSeries)
+  const loadJavTags = useStore((state) => state.loadJavTags)
   const preferChineseName = useStore((state) =>
     configFlag(state.config?.jav_idol_prefer_chinese_name)
   )
@@ -152,6 +163,11 @@ export default function JavGrid({
   const seriesPreviewInflightRef = useRef(new Map())
   const [coverPreview, setCoverPreview] = useState(null)
   const [videoManagerItem, setVideoManagerItem] = useState(null)
+  const [manualScrapeItem, setManualScrapeItem] = useState(null)
+  const [manualScrapeSaving, setManualScrapeSaving] = useState(false)
+  const [deleteCatalogItem, setDeleteCatalogItem] = useState(null)
+  const [deleteCatalogSaving, setDeleteCatalogSaving] = useState(false)
+  const [catalogActionError, setCatalogActionError] = useState('')
   const activeVideoManagerItem = useMemo(() => {
     if (!videoManagerItem) return null
     const managerID = Number(videoManagerItem?.id)
@@ -270,6 +286,52 @@ export default function JavGrid({
     }
   }
 
+  const refreshCatalogViews = async () => {
+    await Promise.all([
+      loadJavs({ force: true }),
+      loadJavIdols({ force: true }),
+      loadJavStudios({ force: true }),
+      loadJavSeries({ force: true }),
+      loadJavTags({ force: true }),
+    ])
+  }
+
+  const handleManualCatalogScrape = async (info) => {
+    const id = Number(manualScrapeItem?.id)
+    if (!Number.isFinite(id) || id <= 0 || manualScrapeSaving) return
+    setManualScrapeSaving(true)
+    setCatalogActionError('')
+    try {
+      await manualCatalogJavScrape(id, info)
+      setManualScrapeItem(null)
+      await refreshCatalogViews()
+    } catch (error) {
+      const message = getErrorMessage(error)
+      setCatalogActionError(message)
+      useStore.setState({ javError: message })
+    } finally {
+      setManualScrapeSaving(false)
+    }
+  }
+
+  const handleDeleteCatalogItem = async () => {
+    const id = Number(deleteCatalogItem?.id)
+    if (!Number.isFinite(id) || id <= 0 || deleteCatalogSaving) return
+    setDeleteCatalogSaving(true)
+    setCatalogActionError('')
+    try {
+      await deleteCatalogJav(id)
+      setDeleteCatalogItem(null)
+      await refreshCatalogViews()
+    } catch (error) {
+      const message = getErrorMessage(error)
+      setCatalogActionError(message)
+      useStore.setState({ javError: message })
+    } finally {
+      setDeleteCatalogSaving(false)
+    }
+  }
+
   if (!hasItems) {
     return (
       <div className="mt-4 flex min-h-[200px] items-center justify-center rounded border border-dashed border-gray-200 text-gray-500">
@@ -311,6 +373,8 @@ export default function JavGrid({
             onManageVideoRename={onManageVideoRename}
             onManageVideoDelete={onManageVideoDelete}
             onManageVideoTagClick={onManageVideoTagClick}
+            onOpenManualCatalogScrape={setManualScrapeItem}
+            onDeleteCatalogItem={setDeleteCatalogItem}
             loadIdolPreview={loadIdolPreview}
             loadStudioPreview={loadStudioPreview}
             loadSeriesPreview={loadSeriesPreview}
@@ -347,6 +411,65 @@ export default function JavGrid({
         onDeleteVideo={onManageVideoDelete}
         onTagClick={onManageVideoTagClick}
       />
+      <JavManualScrapeModal
+        open={Boolean(manualScrapeItem)}
+        item={manualScrapeItem}
+        saving={manualScrapeSaving}
+        onClose={() => {
+          if (!manualScrapeSaving) {
+            setManualScrapeItem(null)
+            setCatalogActionError('')
+          }
+        }}
+        onLookupMetadata={(code, provider) =>
+          lookupCatalogJavScrape(manualScrapeItem?.id, code, provider)
+        }
+        onSave={handleManualCatalogScrape}
+      />
+      {deleteCatalogItem ? (
+        <AppModal
+          ariaLabel={zh('删除作品', 'Delete work')}
+          contentClassName="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+          closeDisabled={deleteCatalogSaving}
+          onClose={() => {
+            if (!deleteCatalogSaving) {
+              setDeleteCatalogItem(null)
+              setCatalogActionError('')
+            }
+          }}
+        >
+          <h2 className="text-base font-semibold text-gray-900">
+            {zh('删除自定义作品？', 'Delete custom work?')}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-gray-600">
+            {zh(
+              `将删除「${deleteCatalogItem.code || ''}」及其已保存的元信息。此操作不能撤销。`,
+              `This will delete “${deleteCatalogItem.code || ''}” and its saved metadata. This cannot be undone.`
+            )}
+          </p>
+          {catalogActionError ? (
+            <p className="mt-2 text-sm text-red-600">{catalogActionError}</p>
+          ) : null}
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setDeleteCatalogItem(null)}
+              disabled={deleteCatalogSaving}
+              className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+            >
+              {zh('取消', 'Cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteCatalogItem}
+              disabled={deleteCatalogSaving}
+              className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:bg-red-300"
+            >
+              {deleteCatalogSaving ? zh('删除中…', 'Deleting...') : zh('确认删除', 'Delete')}
+            </button>
+          </div>
+        </AppModal>
+      ) : null}
     </>
   )
 }
@@ -1540,6 +1663,8 @@ function JavCard({
   onManageVideoRename,
   onManageVideoDelete,
   onManageVideoTagClick,
+  onOpenManualCatalogScrape,
+  onDeleteCatalogItem,
   loadIdolPreview,
   loadStudioPreview,
   loadSeriesPreview,
@@ -1733,6 +1858,16 @@ function JavCard({
   const handleOpenEditor = (event) => {
     event.stopPropagation()
     setEditorOpen(true)
+  }
+
+  const handleOpenManualCatalogScrape = (event) => {
+    event.stopPropagation()
+    onOpenManualCatalogScrape?.(item)
+  }
+
+  const handleDeleteCatalogItem = (event) => {
+    event.stopPropagation()
+    onDeleteCatalogItem?.(item)
   }
 
   const handleOpenJavFavorites = (event) => {
@@ -2551,6 +2686,18 @@ function JavCard({
                     <MovieEdit fontSize="inherit" />
                   </IconButton>
                 </Tooltip>
+                {item?.is_catalog_only ? (
+                  <Tooltip title={zh('手动刮削', 'Manual scrape')}>
+                    <IconButton
+                      size="small"
+                      onClick={handleOpenManualCatalogScrape}
+                      aria-label={zh('手动刮削', 'Manual scrape')}
+                      className="h-6 w-6"
+                    >
+                      <ManageSearchIcon fontSize="inherit" />
+                    </IconButton>
+                  </Tooltip>
+                ) : null}
                 <Tooltip title={zh('视频管理', 'Manage videos')}>
                   <IconButton
                     size="small"
@@ -2562,6 +2709,18 @@ function JavCard({
                     <VideoLibraryOutlinedIcon fontSize="inherit" />
                   </IconButton>
                 </Tooltip>
+                {item?.is_catalog_only ? (
+                  <Tooltip title={zh('删除自定义作品', 'Delete custom work')}>
+                    <IconButton
+                      size="small"
+                      onClick={handleDeleteCatalogItem}
+                      aria-label={zh('删除自定义作品', 'Delete custom work')}
+                      className="h-6 w-6 text-red-500 hover:text-red-700"
+                    >
+                      <DeleteOutlineIcon fontSize="inherit" />
+                    </IconButton>
+                  </Tooltip>
+                ) : null}
               </div>
               {Array.isArray(item?.videos) && item.videos.length > 1 && (
                 <span className="text-xs text-gray-500">

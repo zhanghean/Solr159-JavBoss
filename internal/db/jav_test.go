@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -408,6 +409,116 @@ func TestListJavIdolsOnlyIncludesIdolsWithVisibleSoloWorks(t *testing.T) {
 	}
 	if items[0].CoverCode != soloJav.Code {
 		t.Fatalf("unexpected cover code: got %q want %q", items[0].CoverCode, soloJav.Code)
+	}
+}
+
+func TestCatalogWorkAppearsInAllCategorySummaries(t *testing.T) {
+	openTestDB(t)
+	ctx := context.Background()
+
+	item, err := SaveCatalogJavManualInfo(ctx, &jav.JavInfo{
+		Code:     "CAT-001",
+		Title:    "Catalog Work",
+		Studio:   "Catalog Studio",
+		Series:   "Catalog Series",
+		Tags:     []string{"Catalog Tag"},
+		Actors:   []string{"Catalog Idol A", "Catalog Idol B"},
+		Provider: jav.ProviderJavDB,
+	})
+	if err != nil {
+		t.Fatalf("SaveCatalogJavManualInfo: %v", err)
+	}
+	if !item.IsCatalogOnly {
+		t.Fatal("catalog work was not marked catalog-only")
+	}
+
+	studios, studioTotal, err := ListJavStudios(ctx, "", 20, 0, nil)
+	if err != nil {
+		t.Fatalf("ListJavStudios: %v", err)
+	}
+	if studioTotal != 1 || len(studios) != 1 || studios[0].Name != "Catalog Studio" || studios[0].WorkCount != 1 {
+		t.Fatalf("unexpected catalog studio summary: total=%d items=%#v", studioTotal, studios)
+	}
+
+	series, seriesTotal, err := ListJavSeries(ctx, "", 20, 0, nil)
+	if err != nil {
+		t.Fatalf("ListJavSeries: %v", err)
+	}
+	if seriesTotal != 1 || len(series) != 1 || series[0].Name != "Catalog Series" || series[0].WorkCount != 1 {
+		t.Fatalf("unexpected catalog series summary: total=%d items=%#v", seriesTotal, series)
+	}
+
+	idols, idolTotal, err := ListJavIdols(ctx, "", "", 20, 0, nil, 0)
+	if err != nil {
+		t.Fatalf("ListJavIdols: %v", err)
+	}
+	if idolTotal != 2 || len(idols) != 2 {
+		t.Fatalf("unexpected catalog idol summary: total=%d items=%#v", idolTotal, idols)
+	}
+	for _, idol := range idols {
+		if idol.WorkCount != 1 || idol.CoverCode != "CAT-001" {
+			t.Fatalf("unexpected catalog idol: %#v", idol)
+		}
+	}
+
+	loaded, err := GetJav(ctx, item.ID, nil)
+	if err != nil {
+		t.Fatalf("GetJav: %v", err)
+	}
+	if len(loaded.Idols) != 2 || len(loaded.Tags) != 1 || loaded.Studio == nil || loaded.Series == nil {
+		t.Fatalf("catalog metadata was not fully attached: %#v", loaded)
+	}
+}
+
+func TestDeleteCatalogJavRemovesOnlyUnlinkedCatalogWork(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	item, err := SaveCatalogJavManualInfo(ctx, &jav.JavInfo{
+		Code:     "DEL-CAT-001",
+		Title:    "Delete Me",
+		Tags:     []string{"Delete Tag"},
+		Actors:   []string{"Delete Idol"},
+		Provider: jav.ProviderJavDB,
+	})
+	if err != nil {
+		t.Fatalf("SaveCatalogJavManualInfo: %v", err)
+	}
+	group := models.JavFavoriteGroup{Name: "Catalog Favorites", EntityType: JavFavoriteEntityJav}
+	if err := db.Create(&group).Error; err != nil {
+		t.Fatalf("create favorite group: %v", err)
+	}
+	if err := db.Create(&models.JavFavoriteMap{
+		JavFavoriteGroupID: group.ID,
+		EntityType:         JavFavoriteEntityJav,
+		EntityID:           item.ID,
+	}).Error; err != nil {
+		t.Fatalf("create favorite map: %v", err)
+	}
+
+	if err := DeleteCatalogJav(ctx, item.ID); err != nil {
+		t.Fatalf("DeleteCatalogJav: %v", err)
+	}
+	var remaining int64
+	if err := db.Model(&models.Jav{}).Where("id = ?", item.ID).Count(&remaining).Error; err != nil {
+		t.Fatalf("count deleted catalog work: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("catalog work still exists: %d", remaining)
+	}
+	if err := db.Model(&models.JavFavoriteMap{}).Where("entity_type = ? AND entity_id = ?", JavFavoriteEntityJav, item.ID).Count(&remaining).Error; err != nil {
+		t.Fatalf("count deleted favorite maps: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("catalog favorite map still exists: %d", remaining)
+	}
+
+	regular := models.Jav{Code: "DEL-REG-001", Title: "Regular"}
+	if err := db.Create(&regular).Error; err != nil {
+		t.Fatalf("create regular jav: %v", err)
+	}
+	if err := DeleteCatalogJav(ctx, regular.ID); !errors.Is(err, ErrJavNotCatalogOnly) {
+		t.Fatalf("DeleteCatalogJav regular error = %v, want ErrJavNotCatalogOnly", err)
 	}
 }
 

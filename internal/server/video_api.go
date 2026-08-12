@@ -789,20 +789,7 @@ func manualVideoJavScrape(c *gin.Context) {
 	}
 	info, err := manualScrapeRequestToJavInfo(req)
 	if err != nil {
-		messageZH := "手动刮削信息无效"
-		messageEN := "Invalid manual scrape metadata"
-		switch err.Error() {
-		case "code is required":
-			messageZH = "番号不能为空"
-			messageEN = "JAV code is required"
-		case "release_date must be YYYY-MM-DD":
-			messageZH = "发行日期格式必须为 YYYY-MM-DD"
-			messageEN = "Release date must use the YYYY-MM-DD format"
-		case "duration_min must be non-negative":
-			messageZH = "时长不能为负数"
-			messageEN = "Duration cannot be negative"
-		}
-		respondLocalizedError(c, http.StatusBadRequest, messageZH, messageEN)
+		respondManualScrapeValidationError(c, err)
 		return
 	}
 

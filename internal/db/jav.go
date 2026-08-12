@@ -1985,9 +1985,13 @@ func applyJavIdolSearch(q *gorm.DB, search string) *gorm.DB {
 func buildVisibleSoloIdolCoverQuery(ctx context.Context, directoryIDs []int64) *gorm.DB {
 	soloJavs := common.DB.WithContext(ctx).
 		Table("jav_idol_map jim_count").
+		Joins("JOIN jav j_count ON j_count.id = jim_count.jav_id").
 		Select("jim_count.jav_id").
-		Group("jim_count.jav_id").
-		Having("COUNT(*) = 1")
+		Group("jim_count.jav_id, j_count.is_catalog_only").
+		// Keep the long-standing solo-work cover rule for scanned videos, while
+		// allowing catalog-only works to introduce every listed actor to the
+		// actress category even when a work has multiple actors.
+		Having("COUNT(*) = 1 OR COALESCE(j_count.is_catalog_only, 0) = 1")
 
 	query := common.DB.WithContext(ctx).
 		Table("jav_idol_map jim_solo").
@@ -2797,6 +2801,17 @@ func SaveJavInfo(ctx context.Context, info *jav.JavInfo) (*models.Jav, error) {
 // local video. A later directory scan can still link a video location to it by
 // code and convert it into a regular linked work.
 func SaveCatalogJavInfo(ctx context.Context, info *jav.JavInfo) (*models.Jav, error) {
+	return saveCatalogJavInfo(ctx, info, false)
+}
+
+// SaveCatalogJavManualInfo stores user-confirmed catalog metadata. Unlike a
+// background/provider refresh, the actors entered in the manual form are the
+// intended complete list and therefore replace any previous actor mappings.
+func SaveCatalogJavManualInfo(ctx context.Context, info *jav.JavInfo) (*models.Jav, error) {
+	return saveCatalogJavInfo(ctx, info, true)
+}
+
+func saveCatalogJavInfo(ctx context.Context, info *jav.JavInfo, replaceIdols bool) (*models.Jav, error) {
 	if info == nil {
 		return nil, errors.New("jav info is nil")
 	}
@@ -2809,6 +2824,21 @@ func SaveCatalogJavInfo(ctx context.Context, info *jav.JavInfo) (*models.Jav, er
 		if err := tx.Model(&models.Jav{}).Where("id = ?", rec.ID).Update("is_catalog_only", true).Error; err != nil {
 			return fmt.Errorf("mark catalog jav: %w", err)
 		}
+		if replaceIdols {
+			idols, err := ensureJavIdolsTx(tx, info.Actors)
+			if err != nil {
+				return err
+			}
+			idolIDs := make([]int64, 0, len(idols))
+			for _, idol := range idols {
+				if idol.ID > 0 {
+					idolIDs = append(idolIDs, idol.ID)
+				}
+			}
+			if err := replaceJavIdolsTx(tx, rec.ID, idolIDs); err != nil {
+				return err
+			}
+		}
 		rec.IsCatalogOnly = true
 		javRec = rec
 		return nil
@@ -2817,6 +2847,56 @@ func SaveCatalogJavInfo(ctx context.Context, info *jav.JavInfo) (*models.Jav, er
 		return nil, err
 	}
 	return javRec, nil
+}
+
+var (
+	// ErrJavNotCatalogOnly protects scanned/local works from the catalog delete
+	// action exposed in the Works page.
+	ErrJavNotCatalogOnly = errors.New("jav is not catalog-only")
+	// ErrCatalogJavHasVideoLocations means the record is no longer a pure
+	// catalog entry, even if its local file location is currently hidden.
+	ErrCatalogJavHasVideoLocations = errors.New("catalog jav has video locations")
+)
+
+// DeleteCatalogJav deletes a catalog-only work and its metadata mappings. It
+// never deletes a record that has ever been linked to a local video location.
+func DeleteCatalogJav(ctx context.Context, javID int64) error {
+	if javID <= 0 {
+		return errors.New("jav id must be positive")
+	}
+	return common.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var item models.Jav
+		if err := tx.Where("id = ?", javID).First(&item).Error; err != nil {
+			return err
+		}
+		if !item.IsCatalogOnly {
+			return ErrJavNotCatalogOnly
+		}
+
+		var locationCount int64
+		if err := tx.Model(&models.VideoLocation{}).Where("jav_id = ?", javID).Count(&locationCount).Error; err != nil {
+			return fmt.Errorf("count catalog jav video locations: %w", err)
+		}
+		if locationCount > 0 {
+			return ErrCatalogJavHasVideoLocations
+		}
+		if err := tx.Where("entity_type = ? AND entity_id = ?", JavFavoriteEntityJav, javID).Delete(&models.JavFavoriteMap{}).Error; err != nil {
+			return fmt.Errorf("delete catalog jav favorite maps: %w", err)
+		}
+		if err := tx.Where("jav_id = ?", javID).Delete(&models.JavTagMap{}).Error; err != nil {
+			return fmt.Errorf("delete catalog jav tag maps: %w", err)
+		}
+		if err := tx.Where("jav_id = ?", javID).Delete(&models.JavIdolMap{}).Error; err != nil {
+			return fmt.Errorf("delete catalog jav idol maps: %w", err)
+		}
+		if err := tx.Model(&models.JavIdol{}).Where("cover_jav_id = ?", javID).Update("cover_jav_id", nil).Error; err != nil {
+			return fmt.Errorf("clear catalog jav idol covers: %w", err)
+		}
+		if err := tx.Delete(&models.Jav{}, javID).Error; err != nil {
+			return fmt.Errorf("delete catalog jav: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteOrphanJavs removes JAV records that have no video referencing them.
