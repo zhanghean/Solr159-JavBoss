@@ -1115,7 +1115,8 @@ func replaceJavUserTagsTx(tx *gorm.DB, javIDs, tagIDs []int64) error {
 func buildJavFilter(ctx context.Context, idolIDs []int64, tagIDs []int64, search, prefix string, directoryIDs []int64, filters JavSearchFilters) *gorm.DB {
 	q := common.DB.WithContext(ctx).Model(&models.Jav{})
 	visibleTagProviders := visibleJavTagProviders()
-	// Only include JAV entries that have at least one active file location.
+	// Catalog-only entries are deliberately kept without a local file. All other
+	// entries must still have an active location before they appear in the library.
 	validLocation := common.DB.WithContext(ctx).
 		Table("video_location vl").
 		Select("1").
@@ -1123,7 +1124,7 @@ func buildJavFilter(ctx context.Context, idolIDs []int64, tagIDs []int64, search
 		Where("vl.jav_id = jav.id").
 		Where(activeLocationWhereSQL("vl", "d"))
 	validLocation = applyDirectoryFilter(validLocation, "vl", directoryIDs)
-	q = q.Where("EXISTS (?)", validLocation)
+	q = q.Where("COALESCE(jav.is_catalog_only, 0) = 1 OR EXISTS (?)", validLocation)
 	if search != "" {
 		like := fmt.Sprintf("%%%s%%", search)
 		q = q.Where("code LIKE ? OR title LIKE ?", like, like)
@@ -2728,6 +2729,10 @@ func SaveJavInfoAndLinkLocationForVideo(ctx context.Context, info *jav.JavInfo, 
 		if err := setVideoLocationJavIDTx(tx, locationID, videoID, rec.ID, expectedUpdatedAt); err != nil {
 			return err
 		}
+		if err := tx.Model(&models.Jav{}).Where("id = ?", rec.ID).Update("is_catalog_only", false).Error; err != nil {
+			return fmt.Errorf("mark linked jav: %w", err)
+		}
+		rec.IsCatalogOnly = false
 		javRec = rec
 		return nil
 	})
@@ -2760,6 +2765,10 @@ func SaveJavInfoAndLinkVideoLocations(ctx context.Context, info *jav.JavInfo, vi
 		if res.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
+		if err := tx.Model(&models.Jav{}).Where("id = ?", rec.ID).Update("is_catalog_only", false).Error; err != nil {
+			return fmt.Errorf("mark linked jav: %w", err)
+		}
+		rec.IsCatalogOnly = false
 		javRec = rec
 		return nil
 	})
@@ -2792,11 +2801,38 @@ func SaveJavInfo(ctx context.Context, info *jav.JavInfo) (*models.Jav, error) {
 	return javRec, nil
 }
 
+// SaveCatalogJavInfo creates a catalog-only JAV item that does not require a
+// local video. A later directory scan can still link a video location to it by
+// code and convert it into a regular linked work.
+func SaveCatalogJavInfo(ctx context.Context, info *jav.JavInfo) (*models.Jav, error) {
+	if info == nil {
+		return nil, errors.New("jav info is nil")
+	}
+	var javRec *models.Jav
+	err := common.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		rec, err := saveJavInfoTx(tx, info)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&models.Jav{}).Where("id = ?", rec.ID).Update("is_catalog_only", true).Error; err != nil {
+			return fmt.Errorf("mark catalog jav: %w", err)
+		}
+		rec.IsCatalogOnly = true
+		javRec = rec
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return javRec, nil
+}
+
 // DeleteOrphanJavs removes JAV records that have no video referencing them.
 func DeleteOrphanJavs(ctx context.Context) error {
 	var orphanIDs []int64
 	sub := common.DB.WithContext(ctx).Model(&models.VideoLocation{}).Select("DISTINCT jav_id").Where("jav_id IS NOT NULL")
 	if err := common.DB.WithContext(ctx).Model(&models.Jav{}).
+		Where("COALESCE(is_catalog_only, 0) = 0").
 		Where("id NOT IN (?)", sub).
 		Pluck("id", &orphanIDs).Error; err != nil {
 		return fmt.Errorf("find orphan javs: %w", err)

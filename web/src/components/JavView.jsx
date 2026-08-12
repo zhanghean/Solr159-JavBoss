@@ -1,4 +1,5 @@
 import SwapVertIcon from '@mui/icons-material/SwapVert'
+import AddIcon from '@mui/icons-material/Add'
 import { Popover } from '@mui/material'
 import { useState } from 'react'
 import JavGrid from '@/components/JavGrid'
@@ -37,6 +38,7 @@ export default function JavView({
   javTitleMaxRows,
   javIdolTagMaxRows,
   javTagMaxRows,
+  onCreateWork,
   onPlay,
   onIdolClick,
   onOpenFavorites,
@@ -113,7 +115,15 @@ export default function JavView({
               onWaterfallModeChange={onWaterfallModeChange}
             />
           </div>
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onCreateWork}
+              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+            >
+              <AddIcon sx={{ fontSize: 17 }} />
+              {zh('新增作品', 'Add work')}
+            </button>
             <div className="pagination-sort-group flex items-center">
               <span className="pagination-sort-label text-gray-500">{zh('排序', 'Sort')}</span>
               <button

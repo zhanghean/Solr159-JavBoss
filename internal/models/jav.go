@@ -97,6 +97,7 @@ type Jav struct {
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 	IsUncensored   *bool           `json:"is_uncensored"`
+	IsCatalogOnly  bool            `json:"is_catalog_only" gorm:"not null;default:0;index"`
 	SampleImages   JavSampleImages `json:"sample_images" gorm:"type:text;not null;default:'[]'"`
 	FavoriteRating float64         `json:"favorite_rating" gorm:"not null;default:0"`
 	Tags           []JavTag        `json:"tags,omitempty" gorm:"-"`

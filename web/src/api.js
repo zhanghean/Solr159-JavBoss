@@ -565,6 +565,18 @@ export async function fetchJavs({
   return res.json()
 }
 
+export async function createCatalogJav({ code, title = '' } = {}) {
+  const res = await apiFetch('/jav/items', {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({ code, title }),
+  })
+  if (!res.ok) {
+    throw await apiError(res)
+  }
+  return res.json()
+}
+
 export async function fetchJavFilterOptions({
   search = '',
   idolIds = [],

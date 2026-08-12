@@ -247,6 +247,7 @@ function JavListRoute({
   javTotal,
   loadingMore,
   onIdolClick,
+  onCreateWork,
   onLoadMore,
   onOpenFavorites,
   onOpenJavFavorites,
@@ -312,6 +313,7 @@ function JavListRoute({
       onManageVideoDelete={onManageVideoDelete}
       onManageVideoTagClick={onManageVideoTagClick}
       onIdolClick={onIdolClick}
+      onCreateWork={onCreateWork}
       onOpenFavorites={onOpenFavorites}
       onOpenJavFavorites={onOpenJavFavorites}
       onOpenStudioFavorites={onOpenStudioFavorites}

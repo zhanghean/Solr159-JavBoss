@@ -14,6 +14,7 @@ import {
   fetchVideoJavScrapePossibleCodes,
   lookupVideoJavScrape,
   manualVideoJavScrape,
+  createCatalogJav,
   fetchTagCategories,
   createTagCategory,
   reorderTagCategories,
@@ -55,6 +56,7 @@ import SelectionTagsModal from '@/components/SelectionTagsModal'
 import TagPickerModal from '@/components/TagPickerModal'
 import Toast from '@/components/Toast'
 import CenterToast from '@/components/CenterToast'
+import CreateJavModal from '@/components/CreateJavModal'
 import SideTabs from '@/components/SideTabs'
 import TopBar from '@/components/TopBar'
 import PlayerModal from '@/components/PlayerModal'
@@ -258,6 +260,8 @@ export default function App() {
   } = useStore()
 
   const [tagModalOpen, setTagModalOpen] = useState(false)
+  const [createJavOpen, setCreateJavOpen] = useState(false)
+  const [createJavSaving, setCreateJavSaving] = useState(false)
   const [tagModalApplyMode, setTagModalApplyMode] = useState('replace')
   const [tagCategories, setTagCategories] = useState([])
   const [videoSettingsOpen, setVideoSettingsOpen] = useState(false)
@@ -3221,6 +3225,33 @@ export default function App() {
     [applyJavTagFilter]
   )
 
+  const handleCreateCatalogJav = useCallback(
+    async ({ code, title }) => {
+      setCreateJavSaving(true)
+      try {
+        const item = await createCatalogJav({ code, title })
+        setCreateJavOpen(false)
+        useStore.setState({
+          viewMode: 'jav',
+          javTab: 'list',
+          javPage: 1,
+          javSearchTerm: String(item?.code || code || '').trim(),
+          javRandomMode: false,
+          javRandomSeed: null,
+        })
+        await loadJavs({ force: true })
+        showToast(
+          item?.is_catalog_only
+            ? zh('作品已新增，可在作品菜单中继续编辑', 'Work added. Continue editing it from the work menu.')
+            : zh('作品已存在，已为你打开', 'This work already exists and has been opened.')
+        )
+      } finally {
+        setCreateJavSaving(false)
+      }
+    },
+    [loadJavs, showToast]
+  )
+
   const loadJavTagCategories = useCallback(async () => {
     const categories = await fetchJavTagCategories()
     setJavTagCategories(Array.isArray(categories) ? categories : [])
@@ -3680,6 +3711,7 @@ export default function App() {
               javTitleMaxRows,
               javIdolTagMaxRows,
               javTagMaxRows,
+              onCreateWork: () => setCreateJavOpen(true),
               onPlay: handleJavPlay,
               onOpenFile: handleJavOpenFile,
               alternatePlayerLabel,
@@ -3749,6 +3781,13 @@ export default function App() {
           />
         )}
       </main>
+
+      <CreateJavModal
+        open={createJavOpen}
+        saving={createJavSaving}
+        onClose={() => !createJavSaving && setCreateJavOpen(false)}
+        onCreate={handleCreateCatalogJav}
+      />
 
       <JavQueryEditorModal
         open={javQueryEditorOpen}

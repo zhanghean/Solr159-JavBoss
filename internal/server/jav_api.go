@@ -127,6 +127,71 @@ func searchJav(c *gin.Context) {
 	})
 }
 
+type createCatalogJavRequest struct {
+	Code  string `json:"code"`
+	Title string `json:"title"`
+}
+
+// createCatalogJavItem creates a work without requiring a scanned local video.
+// Rich metadata remains editable through the existing JAV edit dialog.
+func createCatalogJavItem(c *gin.Context) {
+	var req createCatalogJavRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondLocalizedError(c, http.StatusBadRequest, "新增作品请求无效", "Invalid create work request")
+		return
+	}
+	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	if code == "" || len(code) > 64 {
+		respondLocalizedError(c, http.StatusBadRequest, "番号不能为空或过长", "JAV code is required and must be at most 64 characters")
+		return
+	}
+	for _, r := range code {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			respondLocalizedError(c, http.StatusBadRequest, "番号只能包含字母、数字、连字符或下划线", "JAV code may only contain letters, numbers, hyphens, or underscores")
+			return
+		}
+	}
+
+	existing, err := dbpkg.GetJavByCode(c.Request.Context(), code)
+	if err != nil {
+		logging.Error("load existing catalog jav code=%s: %v", code, err)
+		respondLocalizedError(c, http.StatusInternalServerError, "读取作品失败", "Failed to load JAV item")
+		return
+	}
+	if existing != nil {
+		item, err := dbpkg.GetJav(c.Request.Context(), existing.ID, nil)
+		if err != nil {
+			logging.Error("load existing catalog jav id=%d: %v", existing.ID, err)
+			respondLocalizedError(c, http.StatusInternalServerError, "读取作品失败", "Failed to load JAV item")
+			return
+		}
+		c.JSON(http.StatusOK, item)
+		return
+	}
+
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = code
+	}
+	created, err := dbpkg.SaveCatalogJavInfo(c.Request.Context(), &jav.JavInfo{
+		Code:     code,
+		Title:    title,
+		Provider: jav.ProviderUser,
+	})
+	if err != nil {
+		logging.Error("create catalog jav code=%s: %v", code, err)
+		respondLocalizedError(c, http.StatusBadRequest, "新增作品失败", "Failed to create JAV item")
+		return
+	}
+	item, err := dbpkg.GetJav(c.Request.Context(), created.ID, nil)
+	if err != nil {
+		logging.Error("load created catalog jav id=%d: %v", created.ID, err)
+		respondLocalizedError(c, http.StatusInternalServerError, "读取新增作品失败", "Failed to load created JAV item")
+		return
+	}
+	c.JSON(http.StatusCreated, item)
+}
+
 func listJavFilterOptions(c *gin.Context) {
 	filterQuery, ok := parseJavFilterQuery(c)
 	if !ok {
